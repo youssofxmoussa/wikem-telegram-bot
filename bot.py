@@ -17,7 +17,9 @@ import urllib.request
 import zipfile
 from dataclasses import dataclass
 from html.parser import HTMLParser
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from threading import Thread
 from typing import Any, Iterable
 
 
@@ -38,6 +40,36 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(message)s",
 )
 LOGGER = logging.getLogger("wikem-bot")
+
+
+class HealthHandler(BaseHTTPRequestHandler):
+    """Minimal HTTP endpoint for Render web-service health checks."""
+
+    def do_GET(self) -> None:
+        if self.path not in {"/", "/healthz"}:
+            self.send_response(404)
+            self.end_headers()
+            return
+        body = b"WikEM Telegram Bot is running\n"
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format: str, *args: Any) -> None:
+        return
+
+
+def start_health_server() -> ThreadingHTTPServer | None:
+    """Start Render's health endpoint when a PORT environment variable exists."""
+    port_value = os.getenv("PORT", "").strip()
+    if not port_value:
+        return None
+    server = ThreadingHTTPServer(("0.0.0.0", int(port_value)), HealthHandler)
+    Thread(target=server.serve_forever, name="health-server", daemon=True).start()
+    LOGGER.info("Health server listening on port %s", port_value)
+    return server
 
 
 class TextExtractor(HTMLParser):
@@ -802,12 +834,16 @@ def main() -> int:
     if not token:
         LOGGER.error("TELEGRAM_BOT_TOKEN is not configured in Replit Secrets")
         return 1
+    health_server = start_health_server()
     try:
         database = WikemDatabase(prepare_database())
         TelegramBot(token, database).run()
     except Exception:
         LOGGER.exception("Bot startup failed")
         return 1
+    finally:
+        if health_server is not None:
+            health_server.shutdown()
 
 
 if __name__ == "__main__":
