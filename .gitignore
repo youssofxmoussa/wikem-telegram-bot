@@ -1,4 +1,3 @@
-data/*
-!data/Wikem.db.zip
 __pycache__/
 *.pyc
+data/
